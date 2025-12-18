@@ -305,13 +305,30 @@ fi
 echo -e "${LIGHT_BLUE}Would you like to setup for production? (yes/no)${NC}"
 read -p "Response: " continue_prod
 if [[ "$continue_prod" =~ ^[Yy] ]]; then
-    # Fix Ansible include issue
+    # Fix internal Bench playbooks for Ansible 2.15+ compatibility
     py_ver=$(python3 -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')")
-    pb_file="/usr/local/lib/python${py_ver}/dist-packages/bench/playbooks/roles/mariadb/tasks/main.yml"
-    [[ ! -f "$pb_file" ]] && pb_file="/usr/lib/python${py_ver}/dist-packages/bench/playbooks/roles/mariadb/tasks/main.yml"
+    bench_path="/usr/local/lib/python${py_ver}/dist-packages/bench"
+    [[ ! -d "$bench_path" ]] && bench_path="/usr/lib/python${py_ver}/dist-packages/bench"
     
-    if [[ -f "$pb_file" ]]; then
-        sudo sed -i 's/- include: /- include_tasks: /g' "$pb_file"
+    if [[ -d "$bench_path" ]]; then
+        log_info "Patching internal Bench playbooks for Ansible compatibility..."
+        # Fix MariaDB include tasks
+        pb_mariadb="$bench_path/playbooks/roles/mariadb/tasks/main.yml"
+        if [[ -f "$pb_mariadb" ]]; then
+            sudo sed -i 's/- include: /- include_tasks: /g' "$pb_mariadb"
+        fi
+        
+        # Fix Nginx vhost conditional (the error you encountered)
+        pb_nginx="$bench_path/playbooks/roles/nginx/tasks/vhosts.yml"
+        if [[ -f "$pb_nginx" ]]; then
+            sudo sed -i 's/when: nginx_vhosts/when: nginx_vhosts | length > 0/g' "$pb_nginx"
+        fi
+        
+        # Fix common role includes
+        pb_common="$bench_path/playbooks/roles/common/tasks/main.yml"
+        if [[ -f "$pb_common" ]]; then
+            sudo sed -i 's/- include: /- include_tasks: /g' "$pb_common"
+        fi
     fi
 
     yes | sudo bench setup production $USER
