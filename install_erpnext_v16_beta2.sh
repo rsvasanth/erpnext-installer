@@ -15,7 +15,7 @@ readonly NC='\033[0m'
 # Version configuration for ERPNext v16
 readonly BENCH_VERSION="v16.0.0-beta.2"
 readonly PYTHON_MIN_VERSION="3.10"
-readonly NODE_VERSION="20"
+readonly NODE_VERSION="22"
 readonly MIN_UBUNTU_VERSION="22.04"
 readonly MIN_DEBIAN_VERSION="12"
 
@@ -131,7 +131,7 @@ install_system_packages() {
     log_warning "Installing required packages..."
     sudo apt install -y -qq \
         software-properties-common \
-        git curl wget bc \
+        git curl wget bc pkg-config \
         build-essential \
         python3-dev python3-setuptools python3-pip python3-venv \
         redis-server \
@@ -139,6 +139,7 @@ install_system_packages() {
         libncurses5-dev libgdbm-dev libnss3-dev \
         libreadline-dev libbz2-dev zlib1g-dev \
         mariadb-server mariadb-client \
+        libmariadb-dev \
         fontconfig libxrender1 xfonts-75dpi xfonts-base xvfb \
         npm snapd
 
