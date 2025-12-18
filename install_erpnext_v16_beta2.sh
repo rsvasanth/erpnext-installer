@@ -14,10 +14,13 @@ readonly NC='\033[0m'
 
 # Version configuration for ERPNext v16
 readonly BENCH_VERSION="version-16-beta.2"
-readonly PYTHON_VERSION="3.11"
+readonly PYTHON_MIN_VERSION="3.10"
 readonly NODE_VERSION="20"
 readonly MIN_UBUNTU_VERSION="22.04"
 readonly MIN_DEBIAN_VERSION="12"
+
+# Global state for detected python
+PYTHON_BIN="python3"
 
 # Error handler
 handle_error() {
@@ -26,6 +29,11 @@ handle_error() {
 }
 
 trap 'handle_error ${LINENO} $?' ERR
+
+# Version comparison: returns 0 if $1 >= $2
+version_ge() {
+    [[ "$1" == "$(echo -e "$1\n$2" | sort -V | tail -n1)" ]]
+}
 
 # Logging helpers
 log_info() {
@@ -69,26 +77,26 @@ ask_password() {
 # Check OS compatibility for v16
 check_os_compatibility() {
     local os_name os_version
-    os_name=$(lsb_release -is)
-    os_version=$(lsb_release -rs)
+    os_name=$(lsb_release -is 2>/dev/null)
+    os_version=$(lsb_release -rs 2>/dev/null)
 
     log_info "Detected OS: $os_name $os_version"
 
     case "$os_name" in
         Ubuntu)
-            if [[ $(echo "$os_version < $MIN_UBUNTU_VERSION" | bc -l) -eq 1 ]]; then
+            if ! version_ge "$os_version" "$MIN_UBUNTU_VERSION"; then
                 log_error "ERPNext v16 requires Ubuntu $MIN_UBUNTU_VERSION or higher. Current: $os_version"
                 exit 1
             fi
             ;;
         Debian)
-            if [[ $(echo "$os_version < $MIN_DEBIAN_VERSION" | bc -l) -eq 1 ]]; then
+            if ! version_ge "$os_version" "$MIN_DEBIAN_VERSION"; then
                 log_error "ERPNext v16 requires Debian $MIN_DEBIAN_VERSION or higher. Current: $os_version"
                 exit 1
             fi
             ;;
         *)
-            log_error "Unsupported OS. ERPNext v16 requires Ubuntu 22.04+ or Debian 12+"
+            log_error "Unsupported OS: $os_name. ERPNext v16 requires Ubuntu 22.04+ or Debian 12+"
             exit 1
             ;;
     esac
@@ -142,28 +150,31 @@ install_python() {
     local current_version
     current_version=$(python3 --version 2>&1 | awk '{print $2}' | cut -d. -f1,2)
 
-    if [[ $(echo "$current_version >= $PYTHON_VERSION" | bc -l) -eq 1 ]]; then
-        log_success "Python $current_version is already installed"
+    if version_ge "$current_version" "$PYTHON_MIN_VERSION"; then
+        log_success "System Python $current_version is compatible."
+        PYTHON_BIN="python3"
         return
     fi
 
-    log_warning "Installing Python $PYTHON_VERSION..."
+    log_warning "Installing Python 3.11 as system python $current_version is too old..."
     
-    wget -q "https://www.python.org/ftp/python/${PYTHON_VERSION}.7/Python-${PYTHON_VERSION}.7.tgz"
-    tar -xf "Python-${PYTHON_VERSION}.7.tgz"
-    cd "Python-${PYTHON_VERSION}.7"
+    local py_full="3.11.7"
+    wget -q "https://www.python.org/ftp/python/${py_full}/Python-${py_full}.tgz"
+    tar -xf "Python-${py_full}.tgz"
+    cd "Python-${py_full}"
     
     ./configure --prefix=/usr/local --enable-optimizations --enable-shared \
-        LDFLAGS="-Wl,-rpath /usr/local/lib" >/dev/null 2>&1
-    make -j "$(nproc)" >/dev/null 2>&1
-    sudo make altinstall >/dev/null 2>&1
+        LDFLAGS="-Wl,-rpath /usr/local/lib"
+    make -j "$(nproc)"
+    sudo make altinstall
     
     cd ..
-    rm -rf "Python-${PYTHON_VERSION}.7" "Python-${PYTHON_VERSION}.7.tgz"
+    rm -rf "Python-${py_full}" "Python-${py_full}.tgz"
     
-    "python${PYTHON_VERSION}" -m pip install --user --upgrade pip >/dev/null 2>&1
+    PYTHON_BIN="python3.11"
+    "$PYTHON_BIN" -m pip install --user --upgrade pip
     
-    log_success "Python $PYTHON_VERSION installed"
+    log_success "Python 3.11 installed"
 }
 
 # Install wkhtmltopdf
@@ -200,31 +211,32 @@ configure_mariadb() {
 
     log_warning "Configuring MariaDB..."
 
-    # Secure installation
-    sudo mysql -e "ALTER USER 'root'@'localhost' IDENTIFIED BY '$sql_password';" 2>/dev/null || true
+    # Configure character set for v16
+    sudo tee /etc/mysql/mariadb.conf.d/z_frappe.cnf >/dev/null <<-'EOF'
+[mysqld]
+character-set-client-handshake = FALSE
+character-set-server = utf8mb4
+collation-server = utf8mb4_unicode_ci
+
+[mysql]
+default-character-set = utf8mb4
+EOF
+
+    sudo systemctl restart mysql
+
+    # Secure installation and set password
+    # We use -e to handle the plugin switch as well for Ubuntu 24.04+ compatibility
+    sudo mysql -e "ALTER USER 'root'@'localhost' IDENTIFIED BY '$sql_password'; FLUSH PRIVILEGES;"
+    
+    # Run the rest of the cleanup
     sudo mysql -u root -p"$sql_password" <<-EOSQL
-		ALTER USER 'root'@'localhost' IDENTIFIED BY '$sql_password';
 		DELETE FROM mysql.user WHERE User='';
 		DROP DATABASE IF EXISTS test;
 		DELETE FROM mysql.db WHERE Db='test' OR Db='test\\_%';
 		FLUSH PRIVILEGES;
 	EOSQL
 
-    # Configure character set for v16
-    sudo tee -a /etc/mysql/my.cnf >/dev/null <<-EOF
-	
-	[mysqld]
-	character-set-client-handshake = FALSE
-	character-set-server = utf8mb4
-	collation-server = utf8mb4_unicode_ci
-	
-	[mysql]
-	default-character-set = utf8mb4
-	EOF
-
-    sudo systemctl restart mysql
     touch "$marker_file"
-    
     log_success "MariaDB configured"
 }
 
@@ -255,11 +267,13 @@ install_bench() {
     log_warning "Installing Frappe Bench..."
 
     # Handle PEP 668 (externally managed environment)
-    if [[ -f "/usr/lib/python3.11/EXTERNALLY-MANAGED" ]]; then
-        sudo rm -f /usr/lib/python3.11/EXTERNALLY-MANAGED
+    local py_ver
+    py_ver=$("$PYTHON_BIN" -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')")
+    if [[ -f "/usr/lib/python${py_ver}/EXTERNALLY-MANAGED" ]]; then
+        sudo rm -f "/usr/lib/python${py_ver}/EXTERNALLY-MANAGED"
     fi
 
-    sudo "python${PYTHON_VERSION}" -m pip install frappe-bench >/dev/null 2>&1
+    sudo "$PYTHON_BIN" -m pip install frappe-bench
     
     log_success "Frappe Bench installed"
 }
@@ -269,13 +283,17 @@ init_bench() {
     log_warning "Initializing Frappe Bench..."
     
     cd "$HOME"
+    if [[ -d "frappe-bench" ]]; then
+        log_warning "frappe-bench directory already exists. Skipping 'bench init'."
+        return
+    fi
     
     # Load NVM for bench init
     export NVM_DIR="$HOME/.nvm"
     [[ -s "$NVM_DIR/nvm.sh" ]] && source "$NVM_DIR/nvm.sh"
     nvm use "$NODE_VERSION"
 
-    bench init frappe-bench --version "$BENCH_VERSION" --verbose --python "python${PYTHON_VERSION}"
+    bench init frappe-bench --version "$BENCH_VERSION" --verbose --python "$PYTHON_BIN"
     
     log_success "Frappe Bench initialized"
 }
@@ -334,8 +352,13 @@ setup_production() {
 
     # Fix playbook include statements
     local python_ver
-    python_ver=$("python${PYTHON_VERSION}" -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')")
+    python_ver=$("$PYTHON_BIN" -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')")
     local playbook_file="/usr/local/lib/python${python_ver}/dist-packages/bench/playbooks/roles/mariadb/tasks/main.yml"
+    
+    if [[ ! -f "$playbook_file" ]]; then
+        # Check system site-packages as well
+        playbook_file="/usr/lib/python3/dist-packages/bench/playbooks/roles/mariadb/tasks/main.yml"
+    fi
     
     if [[ -f "$playbook_file" ]]; then
         sudo sed -i 's/- include: /- include_tasks: /g' "$playbook_file"
