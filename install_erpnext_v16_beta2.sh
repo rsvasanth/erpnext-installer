@@ -6,12 +6,12 @@
 # Setting error handler
 handle_error() {
     local line=$1
-    local exit_code=$?
-    echo "An error occurred on line $line with exit status $exit_code"
-    exit $exit_code
+    local exit_code=$2
+    echo -e "${RED}An error occurred on line $line with exit status $exit_code${NC}"
+    exit "$exit_code"
 }
 
-trap 'handle_error $LINENO' ERR
+trap 'handle_error $LINENO $?' ERR
 set -e
 
 # Retrieve server IP
@@ -188,13 +188,24 @@ EOF
 sudo systemctl restart mysql
 
 # Secure MariaDB - Forced password authentication for root
-sudo mysql <<-EOSQL
-    ALTER USER 'root'@'localhost' IDENTIFIED VIA mysql_native_password USING PASSWORD('$sqlpasswrd');
-    DELETE FROM mysql.user WHERE User='';
-    DROP DATABASE IF EXISTS test;
-    DELETE FROM mysql.db WHERE Db='test' OR Db='test\\_%';
-    FLUSH PRIVILEGES;
-EOSQL
+if ! sudo mysql -e "status" >/dev/null 2>&1; then
+    echo -e "${YELLOW}Socket login failed, attempting with provided password...${NC}"
+    sudo mysql -u root -p"$sqlpasswrd" <<-EOSQL
+		ALTER USER 'root'@'localhost' IDENTIFIED VIA mysql_native_password USING PASSWORD('$sqlpasswrd');
+		DELETE FROM mysql.user WHERE User='';
+		DROP DATABASE IF EXISTS test;
+		DELETE FROM mysql.db WHERE Db='test' OR Db='test\\_%';
+		FLUSH PRIVILEGES;
+	EOSQL
+else
+    sudo mysql <<-EOSQL
+		ALTER USER 'root'@'localhost' IDENTIFIED VIA mysql_native_password USING PASSWORD('$sqlpasswrd');
+		DELETE FROM mysql.user WHERE User='';
+		DROP DATABASE IF EXISTS test;
+		DELETE FROM mysql.db WHERE Db='test' OR Db='test\\_%';
+		FLUSH PRIVILEGES;
+	EOSQL
+fi
 
 # Node.js
 curl -fsSL https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh | bash
