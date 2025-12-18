@@ -24,6 +24,12 @@ RED='\033[0;31m'
 LIGHT_BLUE='\033[1;34m'
 NC='\033[0m' # No Color
 
+# Logging helpers
+log_info() { echo -e "${LIGHT_BLUE}$1${NC}"; }
+log_success() { echo -e "${GREEN}$1${NC}"; }
+log_warning() { echo -e "${YELLOW}$1${NC}"; }
+log_error() { echo -e "${RED}$1${NC}"; }
+
 # Checking Supported OS and distribution
 SUPPORTED_DISTRIBUTIONS=("Ubuntu" "Debian")
 SUPPORTED_VERSIONS=("24.04" "23.04" "22.04" "20.04" "12" "11" "10" "9" "8")
@@ -222,7 +228,7 @@ if [[ "$success" = false ]]; then
     if echo "$SQL_CMDS" | sudo -E mysql -u root; then
         success=true
     else
-        log_error "Could not gain root access to MariaDB. Please check if MariaDB is running."
+        log_error "Could not gain root access to MariaDB. Please check if MariaDB is running and if the password is correct."
         exit 1
     fi
     unset MYSQL_PWD
