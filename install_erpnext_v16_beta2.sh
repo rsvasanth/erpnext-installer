@@ -187,24 +187,45 @@ EOF
 
 sudo systemctl restart mysql
 
-# Secure MariaDB - Forced password authentication for root
-if ! sudo mysql -e "status" >/dev/null 2>&1; then
-    echo -e "${YELLOW}Socket login failed, attempting with provided password...${NC}"
-    sudo mysql -u root -p"$sqlpasswrd" <<-EOSQL
-		ALTER USER 'root'@'localhost' IDENTIFIED VIA mysql_native_password USING PASSWORD('$sqlpasswrd');
-		DELETE FROM mysql.user WHERE User='';
-		DROP DATABASE IF EXISTS test;
-		DELETE FROM mysql.db WHERE Db='test' OR Db='test\\_%';
-		FLUSH PRIVILEGES;
-	EOSQL
-else
-    sudo mysql <<-EOSQL
-		ALTER USER 'root'@'localhost' IDENTIFIED VIA mysql_native_password USING PASSWORD('$sqlpasswrd');
-		DELETE FROM mysql.user WHERE User='';
-		DROP DATABASE IF EXISTS test;
-		DELETE FROM mysql.db WHERE Db='test' OR Db='test\\_%';
-		FLUSH PRIVILEGES;
-	EOSQL
+# Secure MariaDB - Robust Authentication Handling
+log_info "Applying MariaDB security settings and password..."
+
+# SQL commands to run
+SQL_CMDS=$(cat <<EOF
+ALTER USER 'root'@'localhost' IDENTIFIED VIA mysql_native_password USING PASSWORD('$sqlpasswrd');
+DELETE FROM mysql.user WHERE User='';
+DROP DATABASE IF EXISTS test;
+DELETE FROM mysql.db WHERE Db='test' OR Db='test\\_%';
+FLUSH PRIVILEGES;
+EOF
+)
+
+# Try 3 ways to apply the changes
+success=false
+
+# 1. Try socket-based (no password, sudo)
+if [[ "$success" = false ]] && sudo mysql -e "status" >/dev/null 2>&1; then
+    log_info "Logging in via system socket..."
+    echo "$SQL_CMDS" | sudo mysql && success=true
+fi
+
+# 2. Try maintenance user (debian.cnf)
+if [[ "$success" = false ]] && [[ -f /etc/mysql/debian.cnf ]]; then
+    log_info "Logging in via maintenance user..."
+    echo "$SQL_CMDS" | sudo mysql --defaults-file=/etc/mysql/debian.cnf && success=true
+fi
+
+# 3. Try with the provided password
+if [[ "$success" = false ]]; then
+    log_info "Logging in with provided password..."
+    export MYSQL_PWD="$sqlpasswrd"
+    if echo "$SQL_CMDS" | sudo -E mysql -u root; then
+        success=true
+    else
+        log_error "Could not gain root access to MariaDB. Please check if MariaDB is running."
+        exit 1
+    fi
+    unset MYSQL_PWD
 fi
 
 # Node.js
