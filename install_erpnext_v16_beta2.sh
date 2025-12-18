@@ -196,15 +196,8 @@ sudo systemctl restart mysql
 # Secure MariaDB - Robust Authentication Handling
 log_info "Applying MariaDB security settings and password..."
 
-# SQL commands to run
-SQL_CMDS=$(cat <<EOF
-ALTER USER 'root'@'localhost' IDENTIFIED VIA mysql_native_password USING PASSWORD('$sqlpasswrd');
-DELETE FROM mysql.user WHERE User='';
-DROP DATABASE IF EXISTS test;
-DELETE FROM mysql.db WHERE Db='test' OR Db='test\\_%';
-FLUSH PRIVILEGES;
-EOF
-)
+# SQL commands to run - Using single quotes for the password to avoid shell expansion
+SQL_CMDS="ALTER USER 'root'@'localhost' IDENTIFIED VIA mysql_native_password USING PASSWORD('$sqlpasswrd'); DELETE FROM mysql.user WHERE User=''; DROP DATABASE IF EXISTS test; DELETE FROM mysql.db WHERE Db='test' OR Db='test\\\\_%'; FLUSH PRIVILEGES;"
 
 # Try 3 ways to apply the changes
 success=false
@@ -224,14 +217,34 @@ fi
 # 3. Try with the provided password
 if [[ "$success" = false ]]; then
     log_info "Logging in with provided password..."
-    export MYSQL_PWD="$sqlpasswrd"
-    if echo "$SQL_CMDS" | sudo -E mysql -u root; then
+    if export MYSQL_PWD="$sqlpasswrd" && echo "$SQL_CMDS" | sudo -E mysql -u root; then
         success=true
-    else
-        log_error "Could not gain root access to MariaDB. Please check if MariaDB is running and if the password is correct."
-        exit 1
     fi
     unset MYSQL_PWD
+fi
+
+# 4. EMERGENCY RESCUE: If still fails, force a reset via --skip-grant-tables
+if [[ "$success" = false ]]; then
+    log_warning "Still locked out of MariaDB. Attempting emergency password reset..."
+    sudo systemctl stop mariadb || sudo systemctl stop mysql
+    sudo mysqld_safe --skip-grant-tables --skip-networking &
+    RESCUE_PID=$!
+    sleep 5
+    
+    if mysql -u root -e "FLUSH PRIVILEGES; $SQL_CMDS" 2>/dev/null; then
+        log_success "Emergency password reset successful!"
+        success=true
+    fi
+    
+    sudo kill -9 $RESCUE_PID || true
+    sudo systemctl start mariadb || sudo systemctl start mysql
+    sleep 2
+fi
+
+if [[ "$success" = false ]]; then
+    log_error "CRITICAL: Could not gain root access to MariaDB even with emergency reset."
+    log_error "Please manually reset your MariaDB root password and run the script again."
+    exit 1
 fi
 
 # Node.js
