@@ -124,12 +124,12 @@ confirm_action() {
 # Install system packages
 install_system_packages() {
     log_warning "Updating system packages..."
-    sudo apt update -qq
-    sudo apt upgrade -y -qq
+    sudo apt update
+    sudo apt upgrade -y
     log_success "System packages updated"
 
     log_warning "Installing required packages..."
-    sudo apt install -y -qq \
+    sudo apt install -y \
         software-properties-common \
         git curl wget bc pkg-config \
         build-essential \
@@ -139,7 +139,7 @@ install_system_packages() {
         libncurses5-dev libgdbm-dev libnss3-dev \
         libreadline-dev libbz2-dev zlib1g-dev \
         mariadb-server mariadb-client \
-        libmariadb-dev \
+        libmariadb-dev libcups2-dev \
         fontconfig libxrender1 xfonts-75dpi xfonts-base xvfb \
         npm snapd
 
@@ -282,6 +282,12 @@ install_bench() {
 # Initialize Bench
 init_bench() {
     log_warning "Initializing Frappe Bench..."
+    
+    # Ensure pkg-config is available for the current user session
+    if ! command -v pkg-config &>/dev/null; then
+        log_error "pkg-config is still not found in PATH. Attempting force install..."
+        sudo apt install -y pkg-config
+    fi
     
     cd "$HOME"
     if [[ -d "frappe-bench" ]]; then
