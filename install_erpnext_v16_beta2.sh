@@ -13,7 +13,7 @@ readonly LIGHT_BLUE='\033[1;34m'
 readonly NC='\033[0m'
 
 # Version configuration for ERPNext v16
-readonly BENCH_VERSION="version-16-beta.2"
+readonly BENCH_VERSION="v16.0.0-beta.2"
 readonly PYTHON_MIN_VERSION="3.10"
 readonly NODE_VERSION="20"
 readonly MIN_UBUNTU_VERSION="22.04"
