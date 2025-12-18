@@ -236,7 +236,8 @@ if [[ "$success" = false ]]; then
         success=true
     fi
     
-    sudo kill -9 $RESCUE_PID || true
+    sudo kill -9 $RESCUE_PID >/dev/null 2>&1 || true
+    wait $RESCUE_PID 2>/dev/null || true
     sudo systemctl start mariadb || sudo systemctl start mysql
     sleep 2
 fi
@@ -269,8 +270,7 @@ npm install -g yarn
 echo -e "${YELLOW}Installing Frappe Bench...${NC}"
 # Handle PEP 668 for newer Ubuntu/Debian
 sudo rm -f /usr/lib/python3.*/EXTERNALLY-MANAGED 2>/dev/null || true
-sudo python3 -m pip install --upgrade pip
-sudo python3 -m pip install frappe-bench
+sudo python3 -m pip install frappe-bench --break-system-packages || sudo python3 -m pip install frappe-bench
 
 # Initialize Bench
 cd $HOME
