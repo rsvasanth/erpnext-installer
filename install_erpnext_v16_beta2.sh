@@ -225,12 +225,9 @@ EOF
 
     sudo systemctl restart mysql
 
-    # Secure installation and set password
-    # We use -e to handle the plugin switch as well for Ubuntu 24.04+ compatibility
-    sudo mysql -e "ALTER USER 'root'@'localhost' IDENTIFIED BY '$sql_password'; FLUSH PRIVILEGES;"
-    
-    # Run the rest of the cleanup
-    sudo mysql -u root -p"$sql_password" <<-EOSQL
+    # Secure installation and set password for Ubuntu 24.04+ plugin compatibility
+    sudo mysql <<-EOSQL
+		ALTER USER 'root'@'localhost' IDENTIFIED VIA mysql_native_password USING PASSWORD('$sql_password');
 		DELETE FROM mysql.user WHERE User='';
 		DROP DATABASE IF EXISTS test;
 		DELETE FROM mysql.db WHERE Db='test' OR Db='test\\_%';
@@ -291,8 +288,13 @@ init_bench() {
     
     cd "$HOME"
     if [[ -d "frappe-bench" ]]; then
-        log_warning "frappe-bench directory already exists. Skipping 'bench init'."
-        return
+        if [[ ! -f "frappe-bench/env/bin/python" ]]; then
+            log_warning "Incomplete frappe-bench found. Removing and re-initializing..."
+            rm -rf frappe-bench
+        else
+            log_warning "frappe-bench directory already exists and seems valid. Skipping 'bench init'."
+            return
+        fi
     fi
     
     # Load NVM for bench init
@@ -317,6 +319,7 @@ create_site() {
     sudo chmod -R o+rx "$HOME"
 
     bench new-site "$site_name" \
+        --db-root-username root \
         --db-root-password "$sql_password" \
         --admin-password "$admin_password"
     
